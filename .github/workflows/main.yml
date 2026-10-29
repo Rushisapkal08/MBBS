@@ -1,26 +1,115 @@
 name: Build Android APK
+
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+push:
+branches:
+- main
+workflow_dispatch:
+
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: 17 }
-      - run: npm install
-      - run: npx cap add android
-      - name: Generate icons
-        run: npx @capacitor/assets generate --android --assetPath resources
-      - run: npx cap sync android
-      - name: Build debug APK
-        working-directory: android
-        run: ./gradlew assembleDebug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: MBBS-Tracker-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+build:
+runs-on: ubuntu-latest
+
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+
+  - name: Setup Node.js
+    uses: actions/setup-node@v4
+    with:
+      node-version: 20
+      cache: npm
+
+  - name: Setup Java
+    uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: 17
+
+  - name: Install dependencies
+    run: npm install
+
+  - name: Build web app
+    run: npm run build
+
+  - name: Verify web assets
+    run: |
+      if [ ! -f "www/index.html" ] && [ ! -f "dist/index.html" ] && [ ! -f "build/index.html" ]; then
+        echo "ERROR: Web build did not generate index.html in www, dist, or build."
+        echo "Check package.json and your framework's build output directory."
+        exit 1
+      fi
+
+  - name: Configure Capacitor web directory
+    run: |
+      node --input-type=module <<'NODE'
+      import fs from 'node:fs';
+
+      const configFiles = [
+        'capacitor.config.ts',
+        'capacitor.config.js',
+        'capacitor.config.json'
+      ];
+
+      const existingConfig = configFiles.find(file => fs.existsSync(file));
+
+      if (!existingConfig) {
+        throw new Error('Capacitor config file not found.');
+      }
+
+      const webDir = ['www', 'dist', 'build'].find(
+        dir => fs.existsSync(`${dir}/index.html`)
+      );
+
+      if (!webDir) {
+        throw new Error('No valid web assets directory found.');
+      }
+
+      console.log(`Detected web assets directory: ${webDir}`);
+
+      if (existingConfig.endsWith('.json')) {
+        const config = JSON.parse(fs.readFileSync(existingConfig, 'utf8'));
+        config.webDir = webDir;
+        fs.writeFileSync(existingConfig, JSON.stringify(config, null, 2) + '\n');
+      } else {
+        let config = fs.readFileSync(existingConfig, 'utf8');
+
+        if (/\bwebDir\s*:/.test(config)) {
+          config = config.replace(
+            /(\bwebDir\s*:\s*)(['"])[^'"]*\2/,
+            `$1'${webDir}'`
+          );
+        } else {
+          config = config.replace(
+            /(defineConfig\s*\(\s*\{)/,
+            `$1\n  webDir: '${webDir}',`
+          );
+        }
+
+        fs.writeFileSync(existingConfig, config);
+      }
+      NODE
+
+  - name: Add Android platform if needed
+    run: |
+      if [ ! -d android ]; then
+        npx cap add android
+      fi
+
+  - name: Generate Android icons
+    run: npx @capacitor/assets generate --android --assetPath resources
+    continue-on-error: true
+
+  - name: Sync Android
+    run: npx cap sync android
+
+  - name: Build debug APK
+    working-directory: android
+    run: chmod +x gradlew && ./gradlew assembleDebug
+
+  - name: Upload APK
+    uses: actions/upload-artifact@v4
+    with:
+      name: MBBS-Tracker-apk
+      path: android/app/build/outputs/apk/debug/app-debug.apk
+      if-no-files-found: error

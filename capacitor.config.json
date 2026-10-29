@@ -1,0 +1,7 @@
+{
+  "appId": "com.mbbs.tracker",
+  "appName": "MBBS Tracker",
+  "webDir": "www",
+  "backgroundColor": "#161615",
+  "android": { "allowMixedContent": false }
+}
